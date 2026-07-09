@@ -16,10 +16,10 @@ MonoBehaviour:
   - m_FingerID: 1
     m_Targets:
     - m_ShapeType: 0
-      m_UpperTolerance: 0.996
+      m_UpperTolerance: 1
       m_LowerTolerance: 0
       m_Tolerance: 0
-      m_Desired: 0
+      m_Desired: 0.012
   - m_FingerID: 2
     m_Targets:
     - m_ShapeType: 0

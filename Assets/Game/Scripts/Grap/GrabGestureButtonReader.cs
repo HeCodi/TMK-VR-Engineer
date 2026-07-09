@@ -18,8 +18,8 @@ namespace UnityEngine.XR.Interaction.Toolkit.Samples.Hands
 
         private XRHandSubsystem _handSubsystem;
 
-        [Range(0, 1)]
-        private float _grabValue;
+
+        [Range(0, 1)] private float _grabValue;
 
         private bool _performedFist;
         private bool _performed;
@@ -28,11 +28,7 @@ namespace UnityEngine.XR.Interaction.Toolkit.Samples.Hands
         private SelectMethod _selectMethod = SelectMethod.Pinch;
 
         [Header("Gesture Settings")]
-        [SerializeField]
-        private float _pinchDistance = 0.035f;
-
-        [SerializeField]
-        private float _fistCurlThreshold = 0.65f;
+        [SerializeField] private float _pinchDistance = 0.035f;
 
 
         void Start()
@@ -44,7 +40,7 @@ namespace UnityEngine.XR.Interaction.Toolkit.Samples.Hands
             if (subsystems.Count > 0)
                 _handSubsystem = subsystems[0];
             else
-                Debug.LogError("Subsystem not found!");
+                throw new ArgumentNullException();
         }
 
 
@@ -55,7 +51,6 @@ namespace UnityEngine.XR.Interaction.Toolkit.Samples.Hands
             _grabValue = CalculateGrab();
 
             _performed = _grabValue > 0.7f;
-            Debug.Log(_performed);
 
             if (_performed)
                 OnGrabed?.Invoke(_selectMethod);
