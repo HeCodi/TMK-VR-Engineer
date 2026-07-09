@@ -14,12 +14,12 @@ public class HandGrabAttachSwitcher : MonoBehaviour
 
     private void OnEnable()
     {
-        fistGesture.OnGrabed += ChangeAttach;
+        fistGesture.OnGrabedWithSelectMethod += ChangeAttach;
     }
 
     private void OnDisable()
     {
-        fistGesture.OnGrabed -= ChangeAttach;
+        fistGesture.OnGrabedWithSelectMethod -= ChangeAttach;
     }
 
     private void ChangeAttach(GrabGestureButtonReader.SelectMethod selectMethod)

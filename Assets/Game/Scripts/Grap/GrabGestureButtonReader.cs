@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using UnityEngine.Events;
 using UnityEngine.XR.Hands;
 using UnityEngine.XR.Interaction.Toolkit.Inputs.Readers;
 
@@ -14,7 +15,9 @@ namespace UnityEngine.XR.Interaction.Toolkit.Samples.Hands
             Fist
         }
 
-        public event Action<SelectMethod> OnGrabed;
+        public event Action<SelectMethod> OnGrabedWithSelectMethod;
+        public UnityEvent OnGrabed;
+        public UnityEvent OnStopGrabed;
 
         private XRHandSubsystem _handSubsystem;
 
@@ -47,14 +50,22 @@ namespace UnityEngine.XR.Interaction.Toolkit.Samples.Hands
         public void Update()
         {
             _previousPerformed = _performed;
+            
 
             _grabValue = CalculateGrab();
 
             _performed = _grabValue > 0.7f;
 
-            if (_performed)
-                OnGrabed?.Invoke(_selectMethod);
-
+            if (ReadWasPerformedThisFrame())
+            {
+                OnGrabed.Invoke();
+                OnGrabedWithSelectMethod?.Invoke(_selectMethod);
+            }
+            else if (ReadWasCompletedThisFrame())
+            {
+                OnStopGrabed.Invoke();
+                OnGrabedWithSelectMethod?.Invoke(SelectMethod.Pinch);
+            }
         }
 
         float CalculateGrab()
@@ -64,7 +75,7 @@ namespace UnityEngine.XR.Interaction.Toolkit.Samples.Hands
                 _selectMethod = SelectMethod.Pinch;
                 return 1f;
             }
-                
+
 
             if (_performedFist)
             {
