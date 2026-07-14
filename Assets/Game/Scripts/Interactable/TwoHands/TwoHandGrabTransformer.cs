@@ -1,4 +1,5 @@
-﻿using UnityEngine;
+﻿using System;
+using UnityEngine;
 using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
 using UnityEngine.XR.Interaction.Toolkit.Transformers;
@@ -10,6 +11,8 @@ namespace Assets.Game.Scripts.Interactable
         private bool _initialized;
         private Vector3 _localGrabOffset;
 
+        [SerializeField] private Vector3 offset;
+
         public override bool canProcess => true;
 
         public override void Process(
@@ -18,6 +21,7 @@ namespace Assets.Game.Scripts.Interactable
             ref Pose targetPose,
             ref Vector3 localScale)
         {
+
             if (updatePhase != XRInteractionUpdateOrder.UpdatePhase.Dynamic)
                 return;
 
@@ -32,13 +36,9 @@ namespace Assets.Game.Scripts.Interactable
             var firstInteractor = interactors[0];
             Transform firstAttach = firstInteractor.GetAttachTransform(grabInteractable);
 
-            if (interactors.Count == 1)
+            if (interactors.Count < 2)
             {
                 _initialized = false;
-
-                targetPose.position = firstAttach.position;
-                targetPose.rotation = firstAttach.rotation;
-
                 return;
             }
 
@@ -52,7 +52,7 @@ namespace Assets.Game.Scripts.Interactable
 
             Quaternion rotation = Quaternion.LookRotation(
                 dir.normalized,
-                firstAttach.up);
+                grabInteractable.transform.up) * Quaternion.Euler(offset.x, offset.y, offset.z);
 
             // Один раз запоминаем смещение Pivot относительно первой руки
             if (!_initialized)
@@ -65,6 +65,7 @@ namespace Assets.Game.Scripts.Interactable
             }
 
             targetPose.rotation = rotation;
+
             targetPose.position = firstAttach.position + rotation * _localGrabOffset;
         }
     }

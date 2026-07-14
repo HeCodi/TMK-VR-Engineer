@@ -5,7 +5,7 @@ using UnityEngine.XR.Interaction.Toolkit.Locomotion;
 
 namespace Assets.Game.Scripts.Interactable.Abstract
 {
-    [RequireComponent(typeof(XRGrabInteractable), typeof(TwoHandGrabTransformer))]
+    [RequireComponent(typeof(XRGrabInteractable))]
     public abstract class BaseTwoHandInteractableTool : BaseInteractableTool
     {
         private int _handCountLast = 0;

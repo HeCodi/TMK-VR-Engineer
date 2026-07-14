@@ -1,4 +1,5 @@
 using Assets.Game.Scripts.Interactable.Abstract;
+using Assets.Game.Scripts.Select;
 using UnityEngine;
 using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
@@ -33,7 +34,7 @@ public class SelectSystem : MonoBehaviour
 
         GameObject gameObjectInteractable = interactable.transform.gameObject;
 
-        if (gameObjectInteractable.TryGetComponent(out BaseGrabHandler grabHandler))
+        if (gameObjectInteractable.TryGetComponent(out IGrabHandler grabHandler))
         {
             grabHandler.OnSelect(interactor);
         }
@@ -46,7 +47,7 @@ public class SelectSystem : MonoBehaviour
 
         GameObject gameObjectInteractable = interactable.transform.gameObject;
 
-        if (gameObjectInteractable.TryGetComponent(out BaseGrabHandler grabHandler))
+        if (gameObjectInteractable.TryGetComponent(out IGrabHandler grabHandler))
         {
             grabHandler.OnDetach(interactor);
         }
