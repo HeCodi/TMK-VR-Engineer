@@ -18,6 +18,7 @@ public class SelectSystem : MonoBehaviour
         _rightHand.selectExited.AddListener(Detach);
         _leftHand.selectExited.AddListener(Detach);
     }
+
     private void OnDisable()
     {
         _rightHand.selectEntered.RemoveListener(Select);

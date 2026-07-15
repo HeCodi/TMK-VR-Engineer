@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-public class LinearToolLenth : BaseTwoHandInteractableTool
+public class TwoHandLinearInteractable : BaseTwoHandInteractableTool
 {
     [SerializeField] private Transform _targetAttachFirstPoint;
     [SerializeField] private Transform _targetAttachSecondPoint;

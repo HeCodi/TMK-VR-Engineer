@@ -7,7 +7,7 @@ namespace Assets.Game.Scripts.Interactable
 {
     public class ValueInteractableObject : MonoBehaviour
     {
-        public UnityAction<object> ChangedValue;
+        public event Action<object> ChangedValue;
 
         private object _value;
 
@@ -17,7 +17,7 @@ namespace Assets.Game.Scripts.Interactable
             set 
             { 
                 _value = value;
-                ChangedValue.Invoke(value);
+                ChangedValue?.Invoke(value);
             }
         }
     }

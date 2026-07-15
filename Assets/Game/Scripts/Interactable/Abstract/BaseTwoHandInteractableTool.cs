@@ -1,13 +1,16 @@
 ﻿using System.Collections;
 using UnityEngine;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
+using UnityEngine.XR.Interaction.Toolkit.Interactors;
 using UnityEngine.XR.Interaction.Toolkit.Locomotion;
 
 namespace Assets.Game.Scripts.Interactable.Abstract
 {
     [RequireComponent(typeof(XRGrabInteractable))]
-    public abstract class BaseTwoHandInteractableTool : BaseInteractableTool
+    public abstract class BaseTwoHandInteractableTool : BaseInteractable
     {
+        [SerializeField] protected float DeadZone = 0.02f;
+
         private int _handCountLast = 0;
 
         protected bool IsTwoHandGraped()
@@ -15,7 +18,7 @@ namespace Assets.Game.Scripts.Interactable.Abstract
             return Interactors.Count >= 2;
         }
 
-        protected override void WasDetach()
+        protected override void WasDetach(IXRInteractor interactor)
         {
             if (_handCountLast >= 2 && !IsTwoHandGraped())
                 WasDetachTwoHand();
@@ -23,7 +26,7 @@ namespace Assets.Game.Scripts.Interactable.Abstract
             _handCountLast = Interactors.Count;
         }
 
-        protected override void WasSelect()
+        protected override void WasSelect(IXRInteractor interactor)
         {
             if (IsTwoHandGraped() && _handCountLast < 2)
                 WasSelectTwoHand();

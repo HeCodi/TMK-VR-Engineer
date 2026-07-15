@@ -6,15 +6,14 @@ using UnityEngine.XR.Interaction.Toolkit.Interactors;
 
 namespace Assets.Game.Scripts.Interactable.Abstract
 {
+    [RequireComponent(typeof(XRGrabInteractable))]
     public abstract class BaseGrabHandler : MonoBehaviour, IGrabHandler
     {
-        [SerializeField] protected float DeadZone = 0.02f;
-
         private List<IXRInteractor> _interactors = new List<IXRInteractor>();
         private IXRInteractable _thisInteractable;
 
-        protected abstract void WasSelect();
-        protected abstract void WasDetach();
+        protected abstract void WasSelect(IXRInteractor interactor);
+        protected abstract void WasDetach(IXRInteractor interactor);
 
         protected IReadOnlyList<IXRInteractor> Interactors => _interactors;
         protected IXRInteractable ThisInteractable => _thisInteractable ??= GetComponent<IXRInteractable>();
@@ -23,14 +22,14 @@ namespace Assets.Game.Scripts.Interactable.Abstract
         {
             _interactors.Add(interactor);
 
-            WasSelect();
+            WasSelect(interactor);
         }
 
         public void OnDetach(IXRInteractor interactor)
         {
             _interactors.Remove(interactor);
 
-            WasDetach();
+            WasDetach(interactor);
         }
 
         protected List<AttachPointData> GetAttachTransforms()

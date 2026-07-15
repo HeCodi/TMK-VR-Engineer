@@ -4,7 +4,7 @@ using UnityEngine.XR.OpenXR.NativeTypes;
 
 namespace Assets.Game.Scripts.Interactable.Abstract
 {
-    public abstract class BaseInteractableTool : BaseGrabHandler
+    public abstract class BaseInteractable : BaseGrabHandler
     {
 
     }
