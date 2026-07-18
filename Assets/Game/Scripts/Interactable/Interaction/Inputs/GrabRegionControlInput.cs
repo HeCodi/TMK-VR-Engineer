@@ -50,7 +50,7 @@ namespace Assets.Game.Scripts.Interactable.Inputs
             "Активировать управление областью только при наличии " +
             "другой руки на этом же XRGrabInteractable.")]
         [SerializeField]
-        private bool _requireAnotherManipulator = true;
+        private bool _requireAnotherManipulator = false;
 
         private readonly HashSet<IXRSelectInteractor>
             _knownInteractors =

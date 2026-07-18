@@ -20,7 +20,8 @@ namespace Assets.Game.Scripts.Interactable.Mechanics
     [DisallowMultipleComponent]
     [DefaultExecutionOrder(220)]
     public sealed class ThresholdMechanic
-        : BaseValueMechanic
+        : BaseValueMechanic,
+        IBooleanStateSource
     {
         [Header("Thresholds")]
 
@@ -58,6 +59,8 @@ namespace Assets.Game.Scripts.Interactable.Mechanics
         public event Action<bool> StateChanged;
 
         public bool IsActivated => _isActivated;
+
+        public bool IsActive => IsActivated;
 
         protected override void OnEnable()
         {
