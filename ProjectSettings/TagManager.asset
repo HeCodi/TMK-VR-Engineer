@@ -9,11 +9,11 @@ TagManager:
   - Default
   - TransparentFX
   - Ignore Raycast
-  - 
+  - Interactor
   - Water
   - UI
-  - ParentXRGrab
-  - ChildXRGrab
+  - XRGrabZone
+  - 
   - 
   - 
   - 

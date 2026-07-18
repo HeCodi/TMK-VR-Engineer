@@ -1,27 +1,38 @@
 ﻿using UnityEngine;
-using UnityEngine.XR.Interaction.Toolkit.Interactors;
 
 namespace Assets.Game.Scripts.Interactable.Interactions
 {
     /// <summary>
-    /// Вычисляет значение 0..1 из движения руки
-    /// вокруг заданной оси.
+    /// Преобразует орбитальное движение управляющей точки
+    /// вокруг Pivot в значение 0..1.
     ///
-    /// Компонент сам объект не вращает.
-    /// Результат применяется через RotationDriver.
+    /// Предназначен для ограниченного вращения,
+    /// а не для бесконечного rotary encoder.
     /// </summary>
     [DisallowMultipleComponent]
+    [DefaultExecutionOrder(100)]
     public sealed class RotationInteraction
-        : BaseValueInteraction
+        : BasePoseValueInteraction
     {
-        private const float MinimumDirectionSqrMagnitude =
+        private const float MinimumAxisSqrMagnitude =
             0.000001f;
 
-        [Header("Rotation input")]
+        private const float MinimumRadialSqrMagnitude =
+            0.000001f;
 
+        private const float MinimumAngleRange =
+            0.001f;
+
+        [Header("Rotation Frame")]
+
+        [Tooltip(
+            "Неподвижная точка вращения. Не должна быть " +
+            "двигаемым Target RotationDriver.")]
         [SerializeField]
         private Transform _pivot;
 
+        [Tooltip(
+            "Система координат оси вращения.")]
         [SerializeField]
         private Transform _axisSpace;
 
@@ -29,8 +40,10 @@ namespace Assets.Game.Scripts.Interactable.Interactions
         private Vector3 _localAxis =
             Vector3.up;
 
+        [Header("Rotation Range")]
+
         [SerializeField]
-        private float _minimumAngle;
+        private float _minimumAngle = -45f;
 
         [SerializeField]
         private float _maximumAngle = 45f;
@@ -38,32 +51,75 @@ namespace Assets.Game.Scripts.Interactable.Interactions
         [SerializeField]
         private bool _invertInput;
 
-        private Vector3 _previousDirection;
-        private float _currentAngle;
-        private bool _tracking;
+        private Vector3 _startRadial;
+        private Vector3 _startAxis;
 
-        public float CurrentAngle =>
-            _currentAngle;
+        /*
+         * Pivot и Axis механизма в координатах reference-руки.
+         */
+        private Vector3 _referenceLocalPivot;
+        private Vector3 _referenceLocalAxis;
 
-        protected override Vector3 InteractionPoint =>
-            Pivot.position;
+        private float _startAngle;
+        private bool _baselineCaptured;
 
-        private Transform Pivot =>
-            _pivot != null
-                ? _pivot
-                : transform;
-
-        private Transform AxisSpace =>
-            _axisSpace != null
-                ? _axisSpace
-                : Pivot;
-
-        protected override void Awake()
+        private void LateUpdate()
         {
-            base.Awake();
+            if (!TryGetManipulationFrame(
+                    out ManipulationFrame frame))
+            {
+                ResetBaseline();
+                return;
+            }
 
-            _currentAngle =
-                ValueToAngle(Value);
+            if (!TryGetMeasurement(
+                    frame,
+                    out Vector3 radial,
+                    out Vector3 axis))
+            {
+                ResetBaseline();
+                return;
+            }
+
+            if (!_baselineCaptured)
+            {
+                CaptureBaseline(
+                    radial,
+                    axis);
+
+                return;
+            }
+
+            Vector3 currentRadial =
+                Vector3.ProjectOnPlane(
+                    radial,
+                    _startAxis);
+
+            if (currentRadial.sqrMagnitude <
+                MinimumRadialSqrMagnitude)
+            {
+                return;
+            }
+
+            currentRadial.Normalize();
+
+            float deltaAngle =
+                Vector3.SignedAngle(
+                    _startRadial,
+                    currentRadial,
+                    _startAxis);
+
+            float angle =
+                _startAngle +
+                deltaAngle;
+
+            TrySetValueFromInteraction(
+                AngleToValue(angle));
+        }
+
+        protected override void OnManipulationFrameInvalidated()
+        {
+            ResetBaseline();
         }
 
         protected override void OnValidate()
@@ -71,163 +127,195 @@ namespace Assets.Game.Scripts.Interactable.Interactions
             base.OnValidate();
 
             if (_localAxis.sqrMagnitude <
-                MinimumDirectionSqrMagnitude)
+                MinimumAxisSqrMagnitude)
             {
                 _localAxis = Vector3.up;
             }
-        }
 
-        private void Reset()
-        {
-            _pivot = transform;
-            _axisSpace = transform;
-            _localAxis = Vector3.up;
-
-            _minimumAngle = 0f;
-            _maximumAngle = 45f;
-        }
-
-        private void LateUpdate()
-        {
-            if (!TryGetActiveAttach(
-                    out Transform attach))
+            if (Mathf.Abs(
+                    _maximumAngle -
+                    _minimumAngle) <
+                MinimumAngleRange)
             {
-                _tracking = false;
-                return;
+                _maximumAngle =
+                    _minimumAngle + 1f;
+            }
+        }
+
+        private bool TryGetMeasurement(
+            ManipulationFrame frame,
+            out Vector3 radial,
+            out Vector3 axis)
+        {
+            radial = Vector3.zero;
+            axis = Vector3.zero;
+
+            if (!frame.HasReference)
+            {
+                axis = GetWorldAxis();
+
+                radial =
+                    frame.ControlPose.position -
+                    GetPivotPosition();
+            }
+            else
+            {
+                Quaternion inverseReferenceRotation =
+                    Quaternion.Inverse(
+                        frame.ReferencePose.rotation);
+
+                Vector3 controlInReference =
+                    inverseReferenceRotation *
+                    (frame.ControlPose.position -
+                     frame.ReferencePose.position);
+
+                /*
+                 * При начале взаимодействия сохраняем положение
+                 * Pivot и Axis относительно reference-руки.
+                 */
+                if (!_baselineCaptured)
+                {
+                    _referenceLocalPivot =
+                        inverseReferenceRotation *
+                        (GetPivotPosition() -
+                         frame.ReferencePose.position);
+
+                    _referenceLocalAxis =
+                        inverseReferenceRotation *
+                        GetWorldAxis();
+
+                    if (_referenceLocalAxis.sqrMagnitude <
+                        MinimumAxisSqrMagnitude)
+                    {
+                        return false;
+                    }
+
+                    _referenceLocalAxis.Normalize();
+                }
+
+                axis = _referenceLocalAxis;
+
+                radial =
+                    controlInReference -
+                    _referenceLocalPivot;
             }
 
-            Vector3 worldAxis =
-                GetWorldAxis();
+            if (axis.sqrMagnitude <
+                MinimumAxisSqrMagnitude)
+            {
+                return false;
+            }
 
-            Vector3 radialDirection =
-                attach.position -
-                Pivot.position;
+            axis.Normalize();
 
-            radialDirection =
+            radial =
                 Vector3.ProjectOnPlane(
-                    radialDirection,
-                    worldAxis);
+                    radial,
+                    axis);
 
-            if (radialDirection.sqrMagnitude <
-                MinimumDirectionSqrMagnitude)
+            if (radial.sqrMagnitude <
+                MinimumRadialSqrMagnitude)
             {
-                _tracking = false;
+                return false;
+            }
+
+            radial.Normalize();
+            return true;
+        }
+
+        private void CaptureBaseline(
+            Vector3 radial,
+            Vector3 axis)
+        {
+            _startAxis =
+                axis.normalized;
+
+            _startRadial =
+                Vector3.ProjectOnPlane(
+                    radial,
+                    _startAxis);
+
+            if (_startRadial.sqrMagnitude <
+                MinimumRadialSqrMagnitude)
+            {
+                ResetBaseline();
                 return;
             }
 
-            radialDirection.Normalize();
+            _startRadial.Normalize();
 
-            if (!_tracking)
-            {
-                _previousDirection =
-                    radialDirection;
-
-                _currentAngle =
-                    ValueToAngle(Value);
-
-                _tracking = true;
-                return;
-            }
-
-            float deltaAngle =
-                Vector3.SignedAngle(
-                    _previousDirection,
-                    radialDirection,
-                    worldAxis);
-
-            _previousDirection =
-                radialDirection;
-
-            if (_invertInput)
-                deltaAngle = -deltaAngle;
-
-            GetOrderedLimits(
-                out float minimum,
-                out float maximum);
-
-            _currentAngle =
-                Mathf.Clamp(
-                    _currentAngle + deltaAngle,
-                    minimum,
-                    maximum);
-
-            TrySetValueFromInteraction(
-                Mathf.InverseLerp(
-                    minimum,
-                    maximum,
-                    _currentAngle));
-        }
-
-        protected override void OnValueUpdated(
-            float previousValue,
-            float currentValue)
-        {
-            _currentAngle =
-                ValueToAngle(currentValue);
-        }
-
-        protected override void OnActiveManipulatorChanged(
-            IXRSelectInteractor previous,
-            IXRSelectInteractor current)
-        {
-            /*
-             * При переходе на оставшуюся руку
-             * сохраняем текущее значение,
-             * но заново запоминаем направление руки.
-             */
-            _tracking = false;
-
-            _currentAngle =
+            _startAngle =
                 ValueToAngle(Value);
+
+            _baselineCaptured = true;
         }
 
-        private Vector3 GetWorldAxis()
+        private void ResetBaseline()
         {
-            Vector3 worldAxis =
-                AxisSpace.TransformDirection(
-                    _localAxis);
+            _baselineCaptured = false;
 
-            if (worldAxis.sqrMagnitude <
-                MinimumDirectionSqrMagnitude)
-            {
-                return Vector3.up;
-            }
+            _startRadial = Vector3.zero;
+            _startAxis = Vector3.zero;
 
-            return worldAxis.normalized;
+            _referenceLocalPivot = Vector3.zero;
+            _referenceLocalAxis = Vector3.zero;
+        }
+
+        private float AngleToValue(float angle)
+        {
+            float normalized =
+                Mathf.InverseLerp(
+                    _minimumAngle,
+                    _maximumAngle,
+                    angle);
+
+            return _invertInput
+                ? 1f - normalized
+                : normalized;
         }
 
         private float ValueToAngle(float value)
         {
-            GetOrderedLimits(
-                out float minimum,
-                out float maximum);
+            float normalized =
+                Mathf.Clamp01(value);
+
+            if (_invertInput)
+                normalized = 1f - normalized;
 
             return Mathf.Lerp(
-                minimum,
-                maximum,
-                Mathf.Clamp01(value));
+                _minimumAngle,
+                _maximumAngle,
+                normalized);
         }
 
-        private void GetOrderedLimits(
-            out float minimum,
-            out float maximum)
+        private Vector3 GetPivotPosition()
         {
-            minimum =
-                Mathf.Min(
-                    _minimumAngle,
-                    _maximumAngle);
+            return _pivot != null
+                ? _pivot.position
+                : transform.position;
+        }
 
-            maximum =
-                Mathf.Max(
-                    _minimumAngle,
-                    _maximumAngle);
+        private Vector3 GetWorldAxis()
+        {
+            Transform space = _axisSpace;
 
-            if (Mathf.Approximately(
-                    minimum,
-                    maximum))
+            if (space == null)
+                space = _pivot;
+
+            if (space == null)
+                space = transform;
+
+            Vector3 worldAxis =
+                space.TransformDirection(
+                    _localAxis);
+
+            if (worldAxis.sqrMagnitude <
+                MinimumAxisSqrMagnitude)
             {
-                maximum = minimum + 0.001f;
+                return space.up;
             }
+
+            return worldAxis.normalized;
         }
     }
 }

@@ -4,11 +4,7 @@ using UnityEngine;
 namespace Assets.Game.Scripts.Interactable.Drivers
 {
     /// <summary>
-    /// Применяет значение 0..1 как локальное вращение.
-    ///
-    /// Текущая поза объекта в Awake сохраняется.
-    /// Поэтому объект не прыгает при запуске сцены,
-    /// даже если начальное Value не равно нулю.
+    /// Применяет Value 0..1 как локальное вращение Target.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class RotationDriver : MonoBehaviour
@@ -36,74 +32,80 @@ namespace Assets.Game.Scripts.Interactable.Drivers
         [SerializeField]
         private float _maximumAngle = 45f;
 
-        private Quaternion _zeroValueLocalRotation;
+        private Quaternion _zeroValueLocalRotation =
+            Quaternion.identity;
+
         private bool _referenceCaptured;
+        private bool _subscribed;
+
+        public BaseValueInteraction Source =>
+            _source;
+
+        public Transform Target =>
+            _target;
 
         private void Awake()
         {
-            ResolveReferences();
-
-            if (_source != null &&
-                _target != null)
+            if (!ResolveReferences(logError: true))
             {
-                CaptureCurrentAsReference();
+                enabled = false;
+                return;
             }
+
+            CaptureCurrentAsReference();
         }
 
         private void OnEnable()
         {
-            if (_source == null ||
-                _target == null)
+            if (!ResolveReferences(logError: true))
             {
+                enabled = false;
                 return;
             }
-
-            _source.ValueChanged += ApplyValue;
 
             if (!_referenceCaptured)
                 CaptureCurrentAsReference();
 
+            Subscribe();
             ApplyValue(_source.Value);
         }
 
         private void OnDisable()
         {
-            if (_source != null)
-                _source.ValueChanged -= ApplyValue;
+            Unsubscribe();
         }
 
         private void Reset()
         {
-            _source =
-                GetComponent<BaseValueInteraction>();
-
             _target = transform;
-            _localAxis = Vector3.up;
-
-            _minimumAngle = 0f;
-            _maximumAngle = 45f;
+            TryAutoAssignSource();
         }
 
         private void OnValidate()
         {
+            if (_target == null)
+                _target = transform;
+
             if (_localAxis.sqrMagnitude <
                 MinimumAxisSqrMagnitude)
             {
                 _localAxis = Vector3.up;
             }
 
-            if (_target == null)
-                _target = transform;
+            if (_source == null)
+                TryAutoAssignSource();
+
+            _referenceCaptured = false;
         }
 
-        [ContextMenu("Capture Current As Reference")]
+        /// <summary>
+        /// Сохраняет текущую сценную ориентацию как позу,
+        /// соответствующую текущему Source.Value.
+        /// </summary>
         public void CaptureCurrentAsReference()
         {
-            if (_source == null ||
-                _target == null)
-            {
+            if (!ResolveReferences(logError: true))
                 return;
-            }
 
             Vector3 axis =
                 GetNormalizedAxis();
@@ -114,30 +116,42 @@ namespace Assets.Game.Scripts.Interactable.Drivers
                     _maximumAngle,
                     _source.Value);
 
-            Quaternion currentValueRotation =
+            Quaternion currentOffset =
                 Quaternion.AngleAxis(
                     currentAngle,
                     axis);
 
-            /*
-             * Вычисляем rotation при Value = 0,
-             * не двигая объект в момент захвата reference.
-             */
             _zeroValueLocalRotation =
                 _target.localRotation *
-                Quaternion.Inverse(
-                    currentValueRotation);
+                Quaternion.Inverse(currentOffset);
+
+            _referenceCaptured = true;
+        }
+
+        /// <summary>
+        /// Явно считает текущую ориентацию положением Value = 0.
+        /// </summary>
+        public void CaptureCurrentRotationAsZero()
+        {
+            if (_target == null)
+                return;
+
+            _zeroValueLocalRotation =
+                _target.localRotation;
 
             _referenceCaptured = true;
         }
 
         public void ApplyValue(float value)
         {
-            if (_target == null ||
-                !_referenceCaptured)
-            {
+            if (_target == null)
                 return;
-            }
+
+            if (!_referenceCaptured)
+                CaptureCurrentAsReference();
+
+            Vector3 axis =
+                GetNormalizedAxis();
 
             float angle =
                 Mathf.Lerp(
@@ -145,43 +159,110 @@ namespace Assets.Game.Scripts.Interactable.Drivers
                     _maximumAngle,
                     Mathf.Clamp01(value));
 
-            Quaternion valueRotation =
-                Quaternion.AngleAxis(
-                    angle,
-                    GetNormalizedAxis());
-
             _target.localRotation =
                 _zeroValueLocalRotation *
-                valueRotation;
+                Quaternion.AngleAxis(
+                    angle,
+                    axis);
         }
 
-        private void ResolveReferences()
+        private void Subscribe()
         {
-            if (_source == null)
+            if (_subscribed ||
+                _source == null)
             {
-                _source =
-                    GetComponent<BaseValueInteraction>();
+                return;
             }
 
-            if (_source == null)
+            _source.ValueChanged +=
+                ApplyValue;
+
+            _subscribed = true;
+        }
+
+        private void Unsubscribe()
+        {
+            if (!_subscribed ||
+                _source == null)
             {
-                _source =
-                    GetComponentInParent
-                        <BaseValueInteraction>(true);
+                return;
             }
 
+            _source.ValueChanged -=
+                ApplyValue;
+
+            _subscribed = false;
+        }
+
+        private bool ResolveReferences(bool logError)
+        {
             if (_target == null)
                 _target = transform;
 
-            if (_source != null)
+            if (_source == null)
+                TryAutoAssignSource();
+
+            if (_source != null &&
+                _target != null)
+            {
+                return true;
+            }
+
+            if (!logError)
+                return false;
+
+            if (_source == null)
+            {
+                Debug.LogError(
+                    $"{nameof(RotationDriver)} on '{name}' requires an " +
+                    $"{nameof(BaseValueInteraction)} Source. " +
+                    $"When mechanics are chained, assign the final " +
+                    $"mechanic that controls the visible rotation.",
+                    this);
+            }
+
+            if (_target == null)
+            {
+                Debug.LogError(
+                    $"{nameof(RotationDriver)} on '{name}' requires a Target.",
+                    this);
+            }
+
+            return false;
+        }
+
+        private void TryAutoAssignSource()
+        {
+            BaseValueInteraction[] localSources =
+                GetComponents<BaseValueInteraction>();
+
+            if (localSources.Length == 1)
+            {
+                _source = localSources[0];
+                return;
+            }
+
+            if (localSources.Length > 1)
                 return;
 
-            Debug.LogError(
-                $"{nameof(RotationDriver)} on '{name}' " +
-                $"requires a {nameof(BaseValueInteraction)} source.",
-                this);
+            Transform current = transform.parent;
 
-            enabled = false;
+            while (current != null)
+            {
+                BaseValueInteraction[] parentSources =
+                    current.GetComponents<BaseValueInteraction>();
+
+                if (parentSources.Length == 1)
+                {
+                    _source = parentSources[0];
+                    return;
+                }
+
+                if (parentSources.Length > 1)
+                    return;
+
+                current = current.parent;
+            }
         }
 
         private Vector3 GetNormalizedAxis()

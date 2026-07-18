@@ -1,10 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
-using UnityEngine.XR.Interaction.Toolkit;
-using UnityEngine.XR.Interaction.Toolkit.Interactables;
-using UnityEngine.XR.Interaction.Toolkit.Interactors;
 
 namespace Assets.Game.Scripts.Interactable.Interactions
 {
@@ -14,23 +10,14 @@ namespace Assets.Game.Scripts.Interactable.Interactions
     }
 
     /// <summary>
-    /// База для ограниченных механических интеракций:
-    /// - LinearInteraction;
-    /// - RotationInteraction;
-    /// - будущих ButtonInteraction и LeverInteraction.
+    /// Базовый источник нормализованного значения 0..1.
     ///
-    /// Использует XRSimpleInteractable только как источник Select.
-    /// Сам XRSimpleInteractable ничего не перемещает.
+    /// Класс не знает, откуда поступает значение:
+    /// рука, палец, физический контакт, таймер или внешний код.
     /// </summary>
-    [RequireComponent(typeof(XRSimpleInteractable))]
     public abstract class BaseValueInteraction : MonoBehaviour
     {
         private const float ValueEpsilon = 0.00001f;
-
-        [Header("Input")]
-
-        [SerializeField]
-        private XRSimpleInteractable _inputInteractable;
 
         [Header("Value")]
 
@@ -42,17 +29,38 @@ namespace Assets.Game.Scripts.Interactable.Interactions
         private NormalizedValueEvent _onValueChanged =
             new NormalizedValueEvent();
 
-        private readonly List<IXRSelectInteractor> _manipulators =
-            new List<IXRSelectInteractor>(2);
+        [Header("Interaction Events")]
 
-        private IXRSelectInteractor _activeManipulator;
+        [SerializeField]
+        private UnityEvent _onInteractionStarted =
+            new UnityEvent();
+
+        [SerializeField]
+        private UnityEvent _onInteractionEnded =
+            new UnityEvent();
 
         private float _value;
         private bool _valueInitialized;
-        private bool _subscribed;
+        private bool _isInteracting;
 
+        /// <summary>
+        /// Вызывается при изменении Value.
+        /// </summary>
         public event Action<float> ValueChanged;
 
+        /// <summary>
+        /// Вызывается при начале управления механизмом.
+        /// </summary>
+        public event Action InteractionStarted;
+
+        /// <summary>
+        /// Вызывается при окончании управления механизмом.
+        /// </summary>
+        public event Action InteractionEnded;
+
+        /// <summary>
+        /// Текущее нормализованное значение 0..1.
+        /// </summary>
         public float Value
         {
             get
@@ -62,142 +70,90 @@ namespace Assets.Game.Scripts.Interactable.Interactions
             }
         }
 
-        public XRSimpleInteractable InputInteractable =>
-            _inputInteractable;
-
-        public bool HasActiveManipulator =>
-            _activeManipulator != null;
-
-        protected IXRSelectInteractor ActiveManipulator =>
-            _activeManipulator;
-
         /// <summary>
-        /// Мировая точка механизма.
-        /// Используется при выборе ближайшей оставшейся руки.
+        /// Управляет ли пользователь механизмом прямо сейчас.
         /// </summary>
-        protected abstract Vector3 InteractionPoint { get; }
+        public bool IsInteracting => _isInteracting;
 
         protected virtual void Awake()
         {
-            ResolveInputInteractable();
             EnsureValueInitialized();
-        }
-
-        protected virtual void OnEnable()
-        {
-            ResolveInputInteractable();
-            Subscribe();
-
-            _manipulators.Clear();
-            SetActiveManipulator(null);
-
-            /*
-             * Обычно компонент включён до захвата.
-             * Но если его включили во время Select,
-             * восстанавливаем уже выбранные интеракторы.
-             */
-            if (_inputInteractable != null)
-            {
-                for (int i = 0;
-                     i < _inputInteractable.interactorsSelecting.Count;
-                     i++)
-                {
-                    IXRSelectInteractor interactor =
-                        _inputInteractable.interactorsSelecting[i];
-
-                    AddManipulator(interactor);
-                }
-            }
-
-            EnsureActiveManipulator();
         }
 
         protected virtual void OnDisable()
         {
-            Unsubscribe();
-
-            _manipulators.Clear();
-            SetActiveManipulator(null);
+            SetInteractionActive(false);
         }
 
         protected virtual void OnValidate()
         {
-            _initialValue = Mathf.Clamp01(_initialValue);
-
-            if (_inputInteractable == null)
-            {
-                _inputInteractable =
-                    GetComponent<XRSimpleInteractable>();
-            }
+            _initialValue =
+                Mathf.Clamp01(_initialValue);
         }
 
-        protected virtual void Reset()
-        {
-            _inputInteractable =
-                GetComponent<XRSimpleInteractable>();
-        }
-
+        /// <summary>
+        /// Устанавливает значение с вызовом событий.
+        /// </summary>
         public void SetValue(float value)
         {
             SetValueInternal(
                 value,
-                notify: true,
-                force: false);
+                notify: true);
         }
 
+        /// <summary>
+        /// Устанавливает значение без вызова событий.
+        /// </summary>
         public void SetValueWithoutNotify(float value)
         {
             SetValueInternal(
                 value,
-                notify: false,
-                force: false);
+                notify: false);
         }
 
+        /// <summary>
+        /// Используется производными Interaction-компонентами.
+        /// Возвращает true, если значение действительно изменилось.
+        /// </summary>
         protected bool TrySetValueFromInteraction(float value)
         {
             return SetValueInternal(
                 value,
-                notify: true,
-                force: false);
-        }
-
-        protected bool TryGetActiveAttach(
-            out Transform attachTransform)
-        {
-            EnsureActiveManipulator();
-
-            if (_activeManipulator == null ||
-                _inputInteractable == null)
-            {
-                attachTransform = null;
-                return false;
-            }
-
-            attachTransform =
-                _activeManipulator.GetAttachTransform(
-                    _inputInteractable);
-
-            if (attachTransform != null)
-                return true;
-
-            RemoveManipulator(_activeManipulator);
-            EnsureActiveManipulator();
-
-            if (_activeManipulator == null)
-            {
-                attachTransform = null;
-                return false;
-            }
-
-            attachTransform =
-                _activeManipulator.GetAttachTransform(
-                    _inputInteractable);
-
-            return attachTransform != null;
+                notify: true);
         }
 
         /// <summary>
-        /// Вызывается после изменения Value.
+        /// Изменяет состояние активного взаимодействия.
+        ///
+        /// Protected, чтобы BaseManipulatorValueInteraction
+        /// и будущий PokeButtonInteraction могли вызывать этот метод.
+        /// </summary>
+        protected void SetInteractionActive(bool active)
+        {
+            if (_isInteracting == active)
+                return;
+
+            _isInteracting = active;
+
+            if (_isInteracting)
+            {
+                OnInteractionStarted();
+
+                InteractionStarted?.Invoke();
+                _onInteractionStarted?.Invoke();
+            }
+            else
+            {
+                OnInteractionEnded();
+
+                InteractionEnded?.Invoke();
+                _onInteractionEnded?.Invoke();
+            }
+        }
+
+        /// <summary>
+        /// Вызывается после изменения Value,
+        /// но перед публичными событиями.
         /// </summary>
         protected virtual void OnValueUpdated(
             float previousValue,
@@ -206,194 +162,17 @@ namespace Assets.Game.Scripts.Interactable.Interactions
         }
 
         /// <summary>
-        /// Вызывается при смене руки, управляющей механизмом.
-        /// Derived-классы используют это для сброса grab offset.
+        /// Внутренний callback начала взаимодействия.
         /// </summary>
-        protected virtual void OnActiveManipulatorChanged(
-            IXRSelectInteractor previous,
-            IXRSelectInteractor current)
+        protected virtual void OnInteractionStarted()
         {
         }
 
-        private void ResolveInputInteractable()
+        /// <summary>
+        /// Внутренний callback окончания взаимодействия.
+        /// </summary>
+        protected virtual void OnInteractionEnded()
         {
-            if (_inputInteractable == null)
-            {
-                _inputInteractable =
-                    GetComponent<XRSimpleInteractable>();
-            }
-
-            if (_inputInteractable != null)
-                return;
-
-            Debug.LogError(
-                $"{GetType().Name} on '{name}' requires " +
-                $"{nameof(XRSimpleInteractable)}.",
-                this);
-
-            enabled = false;
-        }
-
-        private void Subscribe()
-        {
-            if (_subscribed ||
-                _inputInteractable == null)
-            {
-                return;
-            }
-
-            _inputInteractable.selectEntered.AddListener(
-                HandleSelectEntered);
-
-            _inputInteractable.selectExited.AddListener(
-                HandleSelectExited);
-
-            _subscribed = true;
-        }
-
-        private void Unsubscribe()
-        {
-            if (!_subscribed ||
-                _inputInteractable == null)
-            {
-                return;
-            }
-
-            _inputInteractable.selectEntered.RemoveListener(
-                HandleSelectEntered);
-
-            _inputInteractable.selectExited.RemoveListener(
-                HandleSelectExited);
-
-            _subscribed = false;
-        }
-
-        private void HandleSelectEntered(
-            SelectEnterEventArgs args)
-        {
-            AddManipulator(args.interactorObject);
-            EnsureActiveManipulator();
-        }
-
-        private void HandleSelectExited(
-            SelectExitEventArgs args)
-        {
-            RemoveManipulator(args.interactorObject);
-            EnsureActiveManipulator();
-        }
-
-        private void AddManipulator(
-            IXRSelectInteractor interactor)
-        {
-            if (interactor == null ||
-                interactor is XRSocketInteractor ||
-                _manipulators.Contains(interactor))
-            {
-                return;
-            }
-
-            _manipulators.Add(interactor);
-        }
-
-        private void RemoveManipulator(
-            IXRSelectInteractor interactor)
-        {
-            if (interactor == null)
-                return;
-
-            bool wasActive =
-                ReferenceEquals(
-                    _activeManipulator,
-                    interactor);
-
-            _manipulators.Remove(interactor);
-
-            if (wasActive)
-                SetActiveManipulator(null);
-        }
-
-        private void EnsureActiveManipulator()
-        {
-            bool activeIsValid =
-                _activeManipulator != null &&
-                _manipulators.Contains(
-                    _activeManipulator);
-
-            if (activeIsValid)
-            {
-                Transform attach =
-                    _activeManipulator.GetAttachTransform(
-                        _inputInteractable);
-
-                if (attach != null)
-                    return;
-            }
-
-            IXRSelectInteractor closest =
-                FindClosestManipulator();
-
-            SetActiveManipulator(closest);
-        }
-
-        private IXRSelectInteractor FindClosestManipulator()
-        {
-            IXRSelectInteractor closest = null;
-            float closestDistance =
-                float.PositiveInfinity;
-
-            Vector3 point =
-                InteractionPoint;
-
-            for (int i = 0;
-                 i < _manipulators.Count;
-                 i++)
-            {
-                IXRSelectInteractor manipulator =
-                    _manipulators[i];
-
-                if (manipulator == null)
-                    continue;
-
-                Transform attach =
-                    manipulator.GetAttachTransform(
-                        _inputInteractable);
-
-                if (attach == null)
-                    continue;
-
-                float distance =
-                    (attach.position - point)
-                    .sqrMagnitude;
-
-                if (distance >= closestDistance)
-                    continue;
-
-                closestDistance = distance;
-                closest = manipulator;
-            }
-
-            return closest;
-        }
-
-        private void SetActiveManipulator(
-            IXRSelectInteractor manipulator)
-        {
-            if (ReferenceEquals(
-                    _activeManipulator,
-                    manipulator))
-            {
-                return;
-            }
-
-            IXRSelectInteractor previous =
-                _activeManipulator;
-
-            _activeManipulator =
-                manipulator;
-
-            OnActiveManipulatorChanged(
-                previous,
-                _activeManipulator);
         }
 
         private void EnsureValueInitialized()
@@ -409,23 +188,25 @@ namespace Assets.Game.Scripts.Interactable.Interactions
 
         private bool SetValueInternal(
             float value,
-            bool notify,
-            bool force)
+            bool notify)
         {
             EnsureValueInitialized();
 
             float clampedValue =
                 Mathf.Clamp01(value);
 
-            if (!force &&
-                Mathf.Abs(clampedValue - _value) <=
+            if (Mathf.Abs(
+                    clampedValue - _value) <=
                 ValueEpsilon)
             {
                 return false;
             }
 
-            float previousValue = _value;
-            _value = clampedValue;
+            float previousValue =
+                _value;
+
+            _value =
+                clampedValue;
 
             OnValueUpdated(
                 previousValue,

@@ -1,13 +1,15 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Threading.Tasks;
+using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.XR.Hands;
 using UnityEngine.XR.Interaction.Toolkit.Inputs.Readers;
 
 namespace UnityEngine.XR.Interaction.Toolkit.Samples.Hands
 {
-    public class GrabGestureButtonReader : MonoBehaviour, IXRInputButtonReader
+    public class GrabGestureButtonReader :
+        MonoBehaviour,
+        IXRInputButtonReader
     {
         public enum SelectMethod
         {
@@ -15,109 +17,167 @@ namespace UnityEngine.XR.Interaction.Toolkit.Samples.Hands
             Fist
         }
 
-        public event Action<SelectMethod> OnGrabedWithSelectMethod;
-        public UnityEvent OnGrabed;
-        public UnityEvent OnStopGrabed;
+        public enum HandSide
+        {
+            Left,
+            Right
+        }
+
+        public event Action<SelectMethod>
+            OnGrabedWithSelectMethod;
+
+        [Header("Hand")]
+
+        [SerializeField]
+        private HandSide _handSide =
+            HandSide.Right;
+
+        [Header("Gesture Settings")]
+
+        [SerializeField]
+        [Range(0.005f, 0.1f)]
+        private float _pinchDistance =
+            0.035f;
+
+        [SerializeField]
+        [Range(0f, 1f)]
+        private float _performedThreshold =
+            0.7f;
+
+        [Header("Events")]
+
+        [SerializeField]
+        private UnityEvent _onGrabed =
+            new UnityEvent();
+
+        [SerializeField]
+        private UnityEvent _onStopGrabed =
+            new UnityEvent();
 
         private XRHandSubsystem _handSubsystem;
 
-
-        [Range(0, 1)] private float _grabValue;
+        private float _grabValue;
 
         private bool _performedFist;
         private bool _performed;
         private bool _previousPerformed;
 
-        private SelectMethod _selectMethod = SelectMethod.Pinch;
+        private SelectMethod _selectMethod =
+            SelectMethod.Pinch;
 
-        [Header("Gesture Settings")]
-        [SerializeField] private float _pinchDistance = 0.035f;
+        public HandSide Side =>
+            _handSide;
 
-
-        void Start()
+        private void Start()
         {
-            List<XRHandSubsystem> subsystems = new();
+            ResolveHandSubsystem();
 
-            SubsystemManager.GetSubsystems(subsystems);
-
-            if (subsystems.Count > 0)
-                _handSubsystem = subsystems[0];
-            else
-                throw new ArgumentNullException();
+            if (_handSubsystem == null)
+            {
+                Debug.LogError(
+                    $"{nameof(GrabGestureButtonReader)} on '{name}' " +
+                    "could not find an XRHandSubsystem.",
+                    this);
+            }
         }
 
-
-        public void Update()
+        private void Update()
         {
-            _previousPerformed = _performed;
-            
+            if (_handSubsystem == null)
+            {
+                ResolveHandSubsystem();
 
-            _grabValue = CalculateGrab();
+                if (_handSubsystem == null)
+                {
+                    ResetInputState();
+                    return;
+                }
+            }
 
-            _performed = _grabValue > 0.7f;
+            _previousPerformed =
+                _performed;
+
+            _grabValue =
+                CalculateGrab();
+
+            _performed =
+                _grabValue >
+                _performedThreshold;
 
             if (ReadWasPerformedThisFrame())
             {
-                OnGrabed.Invoke();
-                OnGrabedWithSelectMethod?.Invoke(_selectMethod);
+                _onGrabed?.Invoke();
+
+                OnGrabedWithSelectMethod?.Invoke(
+                    _selectMethod);
             }
             else if (ReadWasCompletedThisFrame())
             {
-                OnStopGrabed.Invoke();
-                OnGrabedWithSelectMethod?.Invoke(SelectMethod.Pinch);
+                _onStopGrabed?.Invoke();
             }
         }
 
-        float CalculateGrab()
+        private float CalculateGrab()
         {
             if (CheckPinch())
             {
-                _selectMethod = SelectMethod.Pinch;
+                _selectMethod =
+                    SelectMethod.Pinch;
+
                 return 1f;
             }
 
-
             if (_performedFist)
             {
-                _selectMethod = SelectMethod.Fist;
+                _selectMethod =
+                    SelectMethod.Fist;
+
                 return 1f;
             }
 
             return 0f;
         }
 
-        bool CheckPinch()
+        private bool CheckPinch()
         {
             if (_handSubsystem == null)
                 return false;
 
-
-            XRHand hand = _handSubsystem.rightHand;
-
+            XRHand hand =
+                _handSide == HandSide.Left
+                    ? _handSubsystem.leftHand
+                    : _handSubsystem.rightHand;
 
             if (!hand.isTracked)
                 return false;
 
+            XRHandJoint thumb =
+                hand.GetJoint(
+                    XRHandJointID.ThumbTip);
 
-            var thumb = hand.GetJoint(XRHandJointID.ThumbTip);
-            var index = hand.GetJoint(XRHandJointID.IndexTip);
+            XRHandJoint index =
+                hand.GetJoint(
+                    XRHandJointID.IndexTip);
 
-
-            if (!thumb.TryGetPose(out Pose thumbPose))
+            if (!thumb.TryGetPose(
+                    out Pose thumbPose))
+            {
                 return false;
+            }
 
-
-            if (!index.TryGetPose(out Pose indexPose))
+            if (!index.TryGetPose(
+                    out Pose indexPose))
+            {
                 return false;
+            }
 
+            float distance =
+                Vector3.Distance(
+                    thumbPose.position,
+                    indexPose.position);
 
-            float distance = Vector3.Distance(
-                thumbPose.position,
-                indexPose.position
-            );
-
-
-            return distance < _pinchDistance;
+            return distance <
+                   _pinchDistance;
         }
 
         public void OnFistPerformed()
@@ -135,29 +195,72 @@ namespace UnityEngine.XR.Interaction.Toolkit.Samples.Hands
             return _performed;
         }
 
-
         public bool ReadWasPerformedThisFrame()
         {
-            return _performed && !_previousPerformed;
+            return _performed &&
+                   !_previousPerformed;
         }
-
 
         public bool ReadWasCompletedThisFrame()
         {
-            return !_performed && _previousPerformed;
+            return !_performed &&
+                   _previousPerformed;
         }
-
 
         public float ReadValue()
         {
             return _grabValue;
         }
 
-
-        public bool TryReadValue(out float value)
+        public bool TryReadValue(
+            out float value)
         {
             value = _grabValue;
             return true;
+        }
+
+        private void ResolveHandSubsystem()
+        {
+            List<XRHandSubsystem> subsystems =
+                new List<XRHandSubsystem>();
+
+            SubsystemManager.GetSubsystems(
+                subsystems);
+
+            _handSubsystem = null;
+
+            for (int i = 0;
+                 i < subsystems.Count;
+                 i++)
+            {
+                XRHandSubsystem subsystem =
+                    subsystems[i];
+
+                if (subsystem == null)
+                    continue;
+
+                if (subsystem.running)
+                {
+                    _handSubsystem =
+                        subsystem;
+
+                    return;
+                }
+
+                if (_handSubsystem == null)
+                {
+                    _handSubsystem =
+                        subsystem;
+                }
+            }
+        }
+
+        private void ResetInputState()
+        {
+            _grabValue = 0f;
+            _previousPerformed = _performed;
+            _performed = false;
+            _performedFist = false;
         }
     }
 }

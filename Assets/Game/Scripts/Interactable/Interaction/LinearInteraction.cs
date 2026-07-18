@@ -1,72 +1,108 @@
 ﻿using UnityEngine;
-using UnityEngine.XR.Interaction.Toolkit.Interactors;
 
 namespace Assets.Game.Scripts.Interactable.Interactions
 {
     /// <summary>
-    /// Вычисляет значение 0..1 из положения руки
-    /// вдоль заданной оси.
+    /// Преобразует линейное движение управляющей точки
+    /// в нормализованное значение 0..1.
     ///
-    /// Компонент подходит для:
-    /// - ползунков;
-    /// - задвижек;
-    /// - кнопок;
-    /// - суппортов;
-    /// - линейных частей инструмента.
-    ///
-    /// Сам объект не перемещает.
+    /// При наличии reference проекция считается относительно
+    /// reference-точки, но в текущей системе координат механизма.
+    /// Поэтому общее перемещение и вращение предмета не должны
+    /// изменять значение механизма.
     /// </summary>
     [DisallowMultipleComponent]
+    [DefaultExecutionOrder(100)]
     public sealed class LinearInteraction
-        : BaseValueInteraction
+        : BasePoseValueInteraction
     {
         private const float MinimumAxisSqrMagnitude =
             0.000001f;
 
-        [Header("Linear input")]
+        private const float MinimumDistanceRange =
+            0.000001f;
 
+        [Header("Linear Frame")]
+
+        [Tooltip(
+            "Неподвижное начало линейного механизма. " +
+            "Не должно быть Target объекта LinearDriver.")]
         [SerializeField]
         private Transform _origin;
 
+        [Tooltip(
+            "Система координат оси движения. " +
+            "Должна вращаться вместе с корнем инструмента.")]
         [SerializeField]
         private Transform _axisSpace;
 
+        [Tooltip(
+            "Ось движения в локальной системе Axis Space.")]
         [SerializeField]
         private Vector3 _localAxis =
-            Vector3.forward;
+            Vector3.right;
+
+        [Header("Linear Range")]
 
         [SerializeField]
         private float _minimumDistance;
 
         [SerializeField]
-        private float _maximumDistance = 0.1f;
+        private float _maximumDistance = 1f;
 
-        private float _grabOffset;
-        private float _currentDistance;
-        private bool _tracking;
+        [SerializeField]
+        private bool _invertInput;
 
-        public float CurrentDistance =>
-            _currentDistance;
+        private float _startCoordinate;
+        private float _startDistance;
+        private bool _baselineCaptured;
 
-        protected override Vector3 InteractionPoint =>
-            Origin.position;
-
-        private Transform Origin =>
-            _origin != null
-                ? _origin
-                : transform;
-
-        private Transform AxisSpace =>
-            _axisSpace != null
-                ? _axisSpace
-                : Origin;
-
-        protected override void Awake()
+        private void LateUpdate()
         {
-            base.Awake();
+            if (!TryGetManipulationFrame(
+                    out ManipulationFrame frame))
+            {
+                ResetBaseline();
+                return;
+            }
 
-            _currentDistance =
-                ValueToDistance(Value);
+            if (!TryGetCoordinate(
+                    frame,
+                    out float coordinate))
+            {
+                ResetBaseline();
+                return;
+            }
+
+            /*
+             * В первый валидный кадр сохраняем:
+             * - текущую координату руки;
+             * - текущее положение механизма.
+             *
+             * Благодаря этому при начале grab
+             * каретка не телепортируется.
+             */
+            if (!_baselineCaptured)
+            {
+                CaptureBaseline(coordinate);
+                return;
+            }
+
+            float coordinateDelta =
+                coordinate -
+                _startCoordinate;
+
+            float distance =
+                _startDistance +
+                coordinateDelta;
+
+            TrySetValueFromInteraction(
+                DistanceToValue(distance));
+        }
+
+        protected override void OnManipulationFrameInvalidated()
+        {
+            ResetBaseline();
         }
 
         protected override void OnValidate()
@@ -76,146 +112,175 @@ namespace Assets.Game.Scripts.Interactable.Interactions
             if (_localAxis.sqrMagnitude <
                 MinimumAxisSqrMagnitude)
             {
-                _localAxis = Vector3.forward;
+                _localAxis =
+                    Vector3.right;
             }
-        }
 
-        private void Reset()
-        {
-            _origin = transform;
-            _axisSpace = transform;
-            _localAxis = Vector3.forward;
-
-            _minimumDistance = 0f;
-            _maximumDistance = 0.1f;
-        }
-
-        private void LateUpdate()
-        {
-            if (!TryGetActiveAttach(
-                    out Transform attach))
+            if (Mathf.Abs(
+                    _maximumDistance -
+                    _minimumDistance) <
+                MinimumDistanceRange)
             {
-                _tracking = false;
-                return;
+                _maximumDistance =
+                    _minimumDistance +
+                    0.001f;
             }
-
-            Vector3 worldAxis =
-                GetWorldAxis();
-
-            float handDistance =
-                Vector3.Dot(
-                    attach.position -
-                    Origin.position,
-                    worldAxis);
-
-            if (!_tracking)
-            {
-                _currentDistance =
-                    ValueToDistance(Value);
-
-                /*
-                 * Сохраняем разницу между рукой
-                 * и текущим положением механизма.
-                 * Поэтому ползунок не прыгает к руке.
-                 */
-                _grabOffset =
-                    _currentDistance -
-                    handDistance;
-
-                _tracking = true;
-                return;
-            }
-
-            float targetDistance =
-                handDistance +
-                _grabOffset;
-
-            GetOrderedLimits(
-                out float minimum,
-                out float maximum);
-
-            _currentDistance =
-                Mathf.Clamp(
-                    targetDistance,
-                    minimum,
-                    maximum);
-
-            TrySetValueFromInteraction(
-                Mathf.InverseLerp(
-                    minimum,
-                    maximum,
-                    _currentDistance));
         }
 
-        protected override void OnValueUpdated(
-            float previousValue,
-            float currentValue)
+        /// <summary>
+        /// Получает положение управляющей руки вдоль оси механизма.
+        ///
+        /// Важно: относительный вектор переводится в текущую
+        /// систему координат Axis Space. Поэтому при вращении
+        /// всего предмета проекция сохраняется.
+        /// </summary>
+        private bool TryGetCoordinate(
+            ManipulationFrame frame,
+            out float coordinate)
         {
-            _currentDistance =
-                ValueToDistance(currentValue);
-        }
+            coordinate = 0f;
 
-        protected override void OnActiveManipulatorChanged(
-            IXRSelectInteractor previous,
-            IXRSelectInteractor current)
-        {
-            /*
-             * При смене руки новое смещение
-             * рассчитывается от текущего значения.
-             */
-            _tracking = false;
+            Transform axisSpace =
+                GetAxisSpace();
 
-            _currentDistance =
-                ValueToDistance(Value);
-        }
+            if (axisSpace == null)
+                return false;
 
-        private Vector3 GetWorldAxis()
-        {
-            Vector3 worldAxis =
-                AxisSpace.TransformDirection(
-                    _localAxis);
+            Vector3 normalizedLocalAxis =
+                GetNormalizedLocalAxis();
 
-            if (worldAxis.sqrMagnitude <
+            if (normalizedLocalAxis.sqrMagnitude <
                 MinimumAxisSqrMagnitude)
             {
-                return Vector3.forward;
+                return false;
             }
 
-            return worldAxis.normalized;
+            Vector3 relativeWorldPosition;
+
+            if (frame.HasReference)
+            {
+                /*
+                 * Убираем общее перемещение предмета.
+                 *
+                 * Нас интересует положение управляющей руки
+                 * относительно руки, удерживающей корпус.
+                 */
+                relativeWorldPosition =
+                    frame.ControlPose.position -
+                    frame.ReferencePose.position;
+            }
+            else
+            {
+                /*
+                 * Для обычного одноручного линейного механизма
+                 * считаем положение относительно Origin.
+                 */
+                relativeWorldPosition =
+                    frame.ControlPose.position -
+                    GetOriginPosition();
+            }
+
+            /*
+             * Переводим относительный вектор в текущую
+             * систему координат механизма.
+             *
+             * Используем только rotation, намеренно игнорируя scale,
+             * чтобы масштаб объекта не изменял чувствительность.
+             */
+            Vector3 relativeLocalPosition =
+                Quaternion.Inverse(axisSpace.rotation) *
+                relativeWorldPosition;
+
+            coordinate =
+                Vector3.Dot(
+                    relativeLocalPosition,
+                    normalizedLocalAxis);
+
+            return true;
         }
 
-        private float ValueToDistance(float value)
+        private void CaptureBaseline(
+            float coordinate)
         {
-            GetOrderedLimits(
-                out float minimum,
-                out float maximum);
+            _startCoordinate =
+                coordinate;
+
+            _startDistance =
+                ValueToDistance(Value);
+
+            _baselineCaptured =
+                true;
+        }
+
+        private void ResetBaseline()
+        {
+            _baselineCaptured =
+                false;
+
+            _startCoordinate =
+                0f;
+
+            _startDistance =
+                0f;
+        }
+
+        private float DistanceToValue(
+            float distance)
+        {
+            float normalized =
+                Mathf.InverseLerp(
+                    _minimumDistance,
+                    _maximumDistance,
+                    distance);
+
+            if (_invertInput)
+                normalized = 1f - normalized;
+
+            return normalized;
+        }
+
+        private float ValueToDistance(
+            float value)
+        {
+            float normalized =
+                Mathf.Clamp01(value);
+
+            if (_invertInput)
+                normalized = 1f - normalized;
 
             return Mathf.Lerp(
-                minimum,
-                maximum,
-                Mathf.Clamp01(value));
+                _minimumDistance,
+                _maximumDistance,
+                normalized);
         }
 
-        private void GetOrderedLimits(
-            out float minimum,
-            out float maximum)
+        private Transform GetAxisSpace()
         {
-            minimum =
-                Mathf.Min(
-                    _minimumDistance,
-                    _maximumDistance);
+            if (_axisSpace != null)
+                return _axisSpace;
 
-            maximum =
-                Mathf.Max(
-                    _minimumDistance,
-                    _maximumDistance);
+            if (_origin != null)
+                return _origin;
 
-            if (Mathf.Approximately(
-                    minimum,
-                    maximum))
+            return transform;
+        }
+
+        private Vector3 GetNormalizedLocalAxis()
+        {
+            if (_localAxis.sqrMagnitude <
+                MinimumAxisSqrMagnitude)
             {
-                maximum = minimum + 0.0001f;
+                return Vector3.right;
             }
+
+            return _localAxis.normalized;
+        }
+
+        private Vector3 GetOriginPosition()
+        {
+            return _origin != null
+                ? _origin.position
+                : transform.position;
         }
     }
 }
